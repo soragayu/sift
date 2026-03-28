@@ -9,7 +9,6 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import DaySelector from "@/component/DaySelector";
 import TimeRangeSelector from "@/component/TimeRangeSelector";
-import SlotDurationSelector from "@/component/SlotDurationSelector";
 import Toast, { type ToastType } from "@/component/Toast";
 import { insertShiftSlots, deleteAllShiftSlots } from "@/utils/supabaseFunction";
 
@@ -20,7 +19,7 @@ export default function CalendarSetupPage() {
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("22:00");
-  const [slotDuration, setSlotDuration] = useState(240); // 分単位（デフォルト4時間）
+  const slotDuration = 60; // 1時間固定
   const [isCreating, setIsCreating] = useState(false);
   const [toast, setToast] = useState<{
     message: string;
@@ -121,7 +120,7 @@ export default function CalendarSetupPage() {
       showToast("予期しないエラーが発生しました", "error");
       setIsCreating(false);
     }
-  }, [selectedDays, startTime, endTime, slotDuration, showToast, router]);
+  }, [selectedDays, startTime, endTime, showToast, router]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -173,11 +172,6 @@ export default function CalendarSetupPage() {
               onEndChange={setEndTime}
             />
 
-            {/* 時間幅 */}
-            <SlotDurationSelector
-              duration={slotDuration}
-              onChange={setSlotDuration}
-            />
           </div>
 
           {/* アクションバー */}

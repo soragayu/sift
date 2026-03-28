@@ -43,16 +43,10 @@ function DashboardContent() {
 
   const startTime = searchParams.get("start") || "09:00";
   const endTime = searchParams.get("end") || "22:00";
-  const slotDuration = Number(searchParams.get("duration") || "240");
+  const slotDuration = 60; // 1時間固定
 
   // 時間幅の表示ラベル
-  const durationLabel = useMemo(() => {
-    const h = Math.floor(slotDuration / 60);
-    const m = slotDuration % 60;
-    if (h > 0 && m > 0) return `${h}時間${m}分`;
-    if (h > 0) return `${h}時間`;
-    return `${m}分`;
-  }, [slotDuration]);
+  const durationLabel = "1時間";
 
   // 枠数計算（分ベース）
   const timeToMinutes = (time: string): number => {

@@ -336,3 +336,49 @@ export async function deleteShiftAssignment(id: string): Promise<{
     return { success: false, error: "データの削除中にエラーが発生しました" };
   }
 }
+
+/**
+ * 指定した曜日・開始時間・終了時間に一致するシフト枠を検索し、
+ * 見つからなければ新規作成して返す
+ */
+export async function findOrCreateShiftSlot(
+  dayOfWeek: number,
+  startTime: string,
+  endTime: string
+): Promise<{ success: boolean; slotId?: string; error?: string }> {
+  try {
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+
+    // 既存のslotを検索
+    const { data: existing, error: fetchError } = await supabase
+      .from("shift_slots")
+      .select("id")
+      .eq("day_of_week", dayOfWeek)
+      .eq("start_time", startTime)
+      .eq("end_time", endTime)
+      .limit(1)
+      .single();
+
+    if (existing && !fetchError) {
+      return { success: true, slotId: existing.id };
+    }
+
+    // 見つからなければ新規作成
+    const { data: created, error: insertError } = await supabase
+      .from("shift_slots")
+      .insert({ day_of_week: dayOfWeek, start_time: startTime, end_time: endTime })
+      .select("id")
+      .single();
+
+    if (insertError) {
+      console.error("シフト枠の作成エラー:", insertError);
+      return { success: false, error: insertError.message };
+    }
+
+    return { success: true, slotId: created.id };
+  } catch (err) {
+    console.error("予期しないエラー:", err);
+    return { success: false, error: "シフト枠の検索・作成中にエラーが発生しました" };
+  }
+}
