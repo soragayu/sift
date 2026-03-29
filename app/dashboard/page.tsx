@@ -12,6 +12,7 @@ import WeeklyCalendar from "@/component/WeeklyCalendar";
 import Toast, { type ToastType } from "@/component/Toast";
 import CalendarObjectCreator from "@/component/CalendarObjectCreator";
 import CalendarObjectList from "@/component/CalendarObjectList";
+import ScheduleConditionPanel from "@/component/ScheduleConditionPanel";
 import { deleteAllShiftSlots, type CalendarObject } from "@/utils/supabaseFunction";
 
 const DAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"] as const;
@@ -206,6 +207,9 @@ function DashboardContent() {
               slotDuration={slotDuration}
               refreshTrigger={refreshTrigger}
             />
+
+            {/* スケジュール条件 */}
+            <ScheduleConditionPanel />
           </div>
 
           {/* 右側：オブジェクト作成・一覧（1カラム分） */}

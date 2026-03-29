@@ -11,7 +11,8 @@ import {
   fetchCalendarObjects, type CalendarObject,
   fetchShiftAssignments, type ShiftAssignment,
   insertShiftAssignment, deleteShiftAssignment,
-  findOrCreateShiftSlot
+  findOrCreateShiftSlot,
+  fetchScheduleConditions, type ScheduleCondition
 } from "@/utils/supabaseFunction";
 import Toast, { type ToastType } from "./Toast";
 
@@ -51,6 +52,7 @@ export default function WeeklyCalendar({
   const [slots, setSlots] = useState<ShiftSlot[]>([]);
   const [objects, setObjects] = useState<CalendarObject[]>([]);
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
+  const [conditions, setConditions] = useState<ScheduleCondition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [viewMode, setViewMode] = useState<"timeline" | "table">("timeline");
@@ -65,14 +67,16 @@ export default function WeeklyCalendar({
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
-    const [slotsRes, objectsRes, assignsRes] = await Promise.all([
+    const [slotsRes, objectsRes, assignsRes, condsRes] = await Promise.all([
       fetchShiftSlots(),
       fetchCalendarObjects(),
-      fetchShiftAssignments()
+      fetchShiftAssignments(),
+      fetchScheduleConditions()
     ]);
     if (slotsRes.success && slotsRes.data) setSlots(slotsRes.data);
     if (objectsRes.success && objectsRes.data) setObjects(objectsRes.data);
     if (assignsRes.success && assignsRes.data) setAssignments(assignsRes.data);
+    if (condsRes.success && condsRes.data) setConditions(condsRes.data);
     setIsLoading(false);
   }, []);
 
@@ -97,6 +101,128 @@ export default function WeeklyCalendar({
   const today = new Date();
   const jsDay = today.getDay();
   const todayIndex = jsDay === 0 ? 6 : jsDay - 1;
+
+  // ==== 条件評価ロジック ==== //
+  // 指定曜日の日次条件の警告を取得 (d)
+  const getDayWarnings = (day: number) => {
+    const warnings: string[] = [];
+    if (conditions.length === 0) return warnings;
+
+    const dailyConds = conditions.filter(c => !c.time_unit || c.time_unit === "d");
+    if (dailyConds.length === 0) return warnings;
+
+    const daySlots = slots.filter(s => s.day_of_week === day);
+    const daySlotIds = new Set(daySlots.map(s => s.id));
+    const dayAssigns = assignments.filter(a => daySlotIds.has(a.shift_slot_id));
+    
+    // この日にアサインされているすべてのユニークなオブジェクト
+    const uniqueObjectIds = new Set(dayAssigns.map(a => a.calendar_object_id));
+    const dayObjects = Array.from(uniqueObjectIds)
+      .map(id => objects.find(o => o.id === id))
+      .filter(Boolean) as CalendarObject[];
+
+    dailyConds.forEach(cond => {
+      if (!cond.condition_type || cond.condition_type === "count") {
+        let count = 0;
+        dayObjects.forEach(obj => {
+          if (obj.attributes.some(attr => attr.name === cond.attribute_name && attr.value === cond.attribute_value)) count++;
+        });
+
+        let isValid = false;
+        switch (cond.operator) {
+          case ">=": isValid = count >= cond.required_count; break;
+          case "<=": isValid = count <= cond.required_count; break;
+          case "==": isValid = count === cond.required_count; break;
+          case ">":  isValid = count > cond.required_count; break;
+          case "<":  isValid = count < cond.required_count; break;
+        }
+        if (!isValid) warnings.push(`d need count(${cond.attribute_name}=${cond.attribute_value}) ${cond.operator} ${cond.required_count} (現在: ${count})`);
+      } else if (cond.condition_type === "overlap") {
+        let overlapCount = 0;
+        daySlots.forEach(slot => {
+          const slotAssigns = dayAssigns.filter(a => a.shift_slot_id === slot.id);
+          const slotObjects = slotAssigns.map(a => objects.find(o => o.id === a.calendar_object_id)).filter(Boolean) as CalendarObject[];
+          let c1 = 0, c2 = 0;
+          slotObjects.forEach(obj => {
+            if (obj.attributes.some(attr => attr.name === cond.attribute_name && attr.value === cond.attribute_value)) c1++;
+            if (obj.attributes.some(attr => attr.name === cond.attribute2_name && attr.value === cond.attribute2_value)) c2++;
+          });
+          overlapCount += (c1 * c2);
+        });
+
+        let isValid = false;
+        switch (cond.operator) {
+          case ">=": isValid = overlapCount >= cond.required_count; break;
+          case "<=": isValid = overlapCount <= cond.required_count; break;
+          case "==": isValid = overlapCount === cond.required_count; break;
+          case ">":  isValid = overlapCount > cond.required_count; break;
+          case "<":  isValid = overlapCount < cond.required_count; break;
+        }
+        if (!isValid) warnings.push(`d need count(overlap(${cond.attribute_name}=${cond.attribute_value}, ${cond.attribute2_name}=${cond.attribute2_value})) ${cond.operator} ${cond.required_count} (現在: ${overlapCount})`);
+      }
+    });
+
+    return warnings;
+  };
+
+  // 週間条件の警告を取得 (w)
+  const getWeekWarnings = () => {
+    const warnings: string[] = [];
+    if (conditions.length === 0) return warnings;
+
+    const weeklyConds = conditions.filter(c => c.time_unit === "w");
+    if (weeklyConds.length === 0) return warnings;
+
+    // 全曜日のアサインオブジェクト（ユニーク）
+    const uniqueObjectIds = new Set(assignments.map(a => a.calendar_object_id));
+    const allAssignedObjects = Array.from(uniqueObjectIds)
+      .map(id => objects.find(o => o.id === id))
+      .filter(Boolean) as CalendarObject[];
+
+    weeklyConds.forEach(cond => {
+      if (!cond.condition_type || cond.condition_type === "count") {
+        let count = 0;
+        allAssignedObjects.forEach(obj => {
+          if (obj.attributes.some(attr => attr.name === cond.attribute_name && attr.value === cond.attribute_value)) count++;
+        });
+
+        let isValid = false;
+        switch (cond.operator) {
+          case ">=": isValid = count >= cond.required_count; break;
+          case "<=": isValid = count <= cond.required_count; break;
+          case "==": isValid = count === cond.required_count; break;
+          case ">":  isValid = count > cond.required_count; break;
+          case "<":  isValid = count < cond.required_count; break;
+        }
+        if (!isValid) warnings.push(`w need count(${cond.attribute_name}=${cond.attribute_value}) ${cond.operator} ${cond.required_count} (現在: ${count})`);
+      } else if (cond.condition_type === "overlap") {
+        let overlapCount = 0;
+        slots.forEach(slot => {
+          const slotAssigns = assignments.filter(a => a.shift_slot_id === slot.id);
+          const slotObjects = slotAssigns.map(a => objects.find(o => o.id === a.calendar_object_id)).filter(Boolean) as CalendarObject[];
+          let c1 = 0, c2 = 0;
+          slotObjects.forEach(obj => {
+            if (obj.attributes.some(attr => attr.name === cond.attribute_name && attr.value === cond.attribute_value)) c1++;
+            if (obj.attributes.some(attr => attr.name === cond.attribute2_name && attr.value === cond.attribute2_value)) c2++;
+          });
+          overlapCount += (c1 * c2);
+        });
+
+        let isValid = false;
+        switch (cond.operator) {
+          case ">=": isValid = overlapCount >= cond.required_count; break;
+          case "<=": isValid = overlapCount <= cond.required_count; break;
+          case "==": isValid = overlapCount === cond.required_count; break;
+          case ">":  isValid = overlapCount > cond.required_count; break;
+          case "<":  isValid = overlapCount < cond.required_count; break;
+        }
+        if (!isValid) warnings.push(`w need count(overlap(${cond.attribute_name}=${cond.attribute_value}, ${cond.attribute2_name}=${cond.attribute2_value})) ${cond.operator} ${cond.required_count} (現在: ${overlapCount})`);
+      }
+    });
+
+    return warnings;
+  };
+  // ========================== //
 
   // 「予定を追加」ボタンのクリックハンドラ
   const handleAddButtonClick = () => {
@@ -319,25 +445,47 @@ export default function WeeklyCalendar({
 
   return (
     <>
-      <div className="flex justify-between items-center mb-4">
-        {/* 表示モード切り替えトグル */}
-        <div className="inline-flex bg-gray-100 p-1 rounded-lg">
-          <button
-            onClick={() => setViewMode("timeline")}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              viewMode === "timeline" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            タイムライン
-          </button>
-          <button
-            onClick={() => setViewMode("table")}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              viewMode === "table" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            オブジェクト別
-          </button>
+      <div className="flex justify-between items-center mb-4 gap-4">
+        {/* 左側：表示モード切り替えトグルなど */}
+        <div className="flex items-center gap-4">
+          <div className="inline-flex bg-gray-100 p-1 rounded-lg">
+            <button
+              onClick={() => setViewMode("timeline")}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                viewMode === "timeline" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              タイムライン
+            </button>
+            <button
+              onClick={() => setViewMode("table")}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                viewMode === "table" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              オブジェクト別
+            </button>
+          </div>
+          
+          {/* 週間エラー */}
+          {(() => {
+            const weekWarnings = getWeekWarnings();
+            if (weekWarnings.length === 0) return null;
+            return (
+              <div className="relative group/weekwarn flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg cursor-help">
+                <span className="text-red-500 text-sm drop-shadow-sm">⚠️</span>
+                <span className="text-xs font-semibold text-red-700">週間の条件エラー</span>
+                <div className="absolute hidden group-hover/weekwarn:block z-[60] w-72 p-3 bg-gray-900 border border-red-500/30 text-white text-left text-xs rounded-lg shadow-2xl left-0 top-full mt-2 pointer-events-none">
+                  <div className="font-semibold text-red-400 mb-1.5 border-b border-red-500/30 pb-1">週間条件を満たしていません</div>
+                  {weekWarnings.map((w, i) => (
+                    <div key={i} className="mb-1.5 last:mb-0 font-mono text-[10px] break-all leading-tight text-gray-200">
+                      • {w}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* 「予定を追加」ボタン */}
@@ -376,28 +524,45 @@ export default function WeeklyCalendar({
             <div className="px-3 py-3 border-r border-gray-200">
               <span className="text-xs font-medium text-gray-400">時間</span>
             </div>
-            {businessDays.map((day) => (
+            {businessDays.map((day) => {
+              const dayWarnings = getDayWarnings(day);
+              return (
               <div
                 key={day}
-                className="px-3 py-3 text-center border-r border-gray-200 last:border-r-0"
+                className="px-3 py-3 text-center border-r border-gray-200 last:border-r-0 relative group/day"
               >
-                <span
-                  className={`
-                    text-xs font-semibold uppercase tracking-wider
-                    ${day === todayIndex ? "text-blue-600" : "text-gray-500"}
-                  `}
-                >
-                  {DAY_LABELS[day]}
-                </span>
+                <div className="flex items-center justify-center gap-1.5">
+                  <span
+                    className={`
+                      text-xs font-semibold uppercase tracking-wider
+                      ${day === todayIndex ? "text-blue-600" : "text-gray-500"}
+                    `}
+                  >
+                    {DAY_LABELS[day]}
+                  </span>
+                  {dayWarnings.length > 0 && (
+                    <div className="relative group/warn">
+                      <span className="text-red-500 cursor-help text-sm drop-shadow-sm">⚠️</span>
+                      <div className="absolute hidden group-hover/warn:block z-[60] w-64 p-3 bg-gray-900 border border-red-500/30 text-white text-left text-xs rounded-lg shadow-2xl -translate-x-1/2 left-1/2 top-[120%] mt-2 pointer-events-none">
+                        <div className="font-semibold text-red-400 mb-1.5 border-b border-red-500/30 pb-1">日次条件を満たしていません</div>
+                        {dayWarnings.map((w, i) => (
+                          <div key={i} className="mb-1 last:mb-0 font-mono text-[10px] break-all leading-tight">
+                            • {w}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 {day === todayIndex && (
-                  <div className="mt-1">
+                  <div className="mt-1 flex justify-center">
                     <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-[10px] font-bold">
                       {today.getDate()}
                     </span>
                   </div>
                 )}
               </div>
-            ))}
+            )})}
           </div>
 
           {/* ボディ：タイムライン */}
@@ -487,13 +652,30 @@ export default function WeeklyCalendar({
                   <th className="px-4 py-3 border border-gray-200 bg-gray-50 w-48 sticky left-0 z-10 font-medium text-gray-700 text-sm text-center shadow-[1px_0_0_0_#e5e7eb]">
                     オブジェクト
                   </th>
-                  {businessDays.map((day) => (
-                    <th key={day} className="px-4 py-3 border border-gray-200 bg-gray-50 text-center">
-                      <span className={`text-xs font-semibold uppercase tracking-wider ${day === todayIndex ? "text-blue-600" : "text-gray-500"}`}>
-                        {DAY_LABELS[day]}
-                      </span>
+                  {businessDays.map((day) => {
+                    const dayWarnings = getDayWarnings(day);
+                    return (
+                    <th key={day} className="px-4 py-3 border border-gray-200 bg-gray-50 text-center relative group/day">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className={`text-xs font-semibold uppercase tracking-wider ${day === todayIndex ? "text-blue-600" : "text-gray-500"}`}>
+                          {DAY_LABELS[day]}
+                        </span>
+                        {dayWarnings.length > 0 && (
+                          <div className="relative group/warn">
+                            <span className="text-red-500 cursor-help text-sm drop-shadow-sm">⚠️</span>
+                            <div className="absolute hidden group-hover/warn:block z-[60] w-64 p-3 bg-gray-900 border border-red-500/30 text-white text-left text-xs rounded-lg shadow-2xl -translate-x-1/2 left-1/2 top-[120%] mt-2 pointer-events-none">
+                              <div className="font-semibold text-red-400 mb-1.5 border-b border-red-500/30 pb-1">日次条件を満たしていません</div>
+                              {dayWarnings.map((w, i) => (
+                                <div key={i} className="mb-1 last:mb-0 font-mono text-[10px] break-all leading-tight">
+                                  • {w}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </th>
-                  ))}
+                  )})}
                 </tr>
               </thead>
               <tbody>

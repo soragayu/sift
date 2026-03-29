@@ -18,6 +18,7 @@ type CalendarObjectCreatorProps = {
 export default function CalendarObjectCreator({ onCreated, editingObject, onCancelEdit }: CalendarObjectCreatorProps) {
   const [name, setName] = useState("");
   const [attributes, setAttributes] = useState<CalendarObjectAttr[]>([{ name: "", value: "" }]);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
@@ -176,6 +177,8 @@ export default function CalendarObjectCreator({ onCreated, editingObject, onCanc
             属性を追加
           </button>
         </div>
+
+
 
         {/* 保存ボタン */}
         <div className="pt-4 border-t border-gray-100 flex justify-end gap-3">

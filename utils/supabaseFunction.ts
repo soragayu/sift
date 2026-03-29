@@ -382,3 +382,106 @@ export async function findOrCreateShiftSlot(
     return { success: false, error: "シフト枠の検索・作成中にエラーが発生しました" };
   }
 }
+
+// ==============================================
+// スケジュール条件（Schedule Conditions）
+// シフト枠への制約条件を管理
+// ==============================================
+
+export type ScheduleCondition = {
+  id?: string;
+  time_unit?: string;       // 'd' (1日), 'w' (1週間), 'm' (1ヶ月), 'y' (1年)
+  condition_type?: string;  // "count" または "overlap"
+  attribute_name: string;   // 対象の属性名 (e.g., "role")
+  attribute_value: string;  // 属性の値 (e.g., "leader")
+  attribute2_name?: string | null;  // overlap用の2つ目の属性名
+  attribute2_value?: string | null; // overlap用の2つ目の属性値
+  operator: string;         // 比較演算子 (e.g., ">=")
+  required_count: number;   // 必要数 (e.g., 1)
+  created_at?: string;
+};
+
+/**
+ * スケジュール条件を作成する
+ */
+export async function insertScheduleCondition(
+  condition: Omit<ScheduleCondition, "id" | "created_at">
+): Promise<{ success: boolean; data?: ScheduleCondition; error?: string }> {
+  try {
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+
+    const { data, error } = await supabase
+      .from("schedule_conditions")
+      .insert(condition)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("スケジュール条件の插入エラー:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data: data as ScheduleCondition };
+  } catch (err) {
+    console.error("予期しないエラー:", err);
+    return { success: false, error: "データの保存中にエラーが発生しました" };
+  }
+}
+
+/**
+ * すべてのスケジュール条件を取得する
+ */
+export async function fetchScheduleConditions(): Promise<{
+  success: boolean;
+  data?: ScheduleCondition[];
+  error?: string;
+}> {
+  try {
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+
+    const { data, error } = await supabase
+      .from("schedule_conditions")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("スケジュール条件の取得エラー:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data: data as ScheduleCondition[] };
+  } catch (err) {
+    console.error("予期しないエラー:", err);
+    return { success: false, error: "データの取得中にエラーが発生しました" };
+  }
+}
+
+/**
+ * スケジュール条件を削除する
+ */
+export async function deleteScheduleCondition(id: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+
+    const { error } = await supabase
+      .from("schedule_conditions")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("スケジュール条件の削除エラー:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error("予期しないエラー:", err);
+    return { success: false, error: "データの削除中にエラーが発生しました" };
+  }
+}
